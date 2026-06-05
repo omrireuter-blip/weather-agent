@@ -1,0 +1,22 @@
+{
+  "name": "weather-agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "npx tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
+    "@types/node": "^25.9.1",
+    "anthropic": "^0.0.0",
+    "resend": "^6.12.4",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
