@@ -2,7 +2,7 @@ name: Daily Weather Email
 
 on:
   schedule:
-    - cron: '0 6 * * *'   # 06:00 UTC = 09:00 Israel time (UTC+3)
+    - cron: '0 3 * * *'   # 06:00 UTC = 09:00 Israel time (UTC+3)
   workflow_dispatch:        # manual trigger from GitHub Actions UI
 
 jobs:
