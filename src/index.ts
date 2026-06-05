@@ -77,63 +77,144 @@ async function fetchWeather(): Promise<WeatherDay[]> {
   }));
 }
 
-// ── Email body generation ─────────────────────────────────────────────────────
+// ── Weather emoji + color helpers ────────────────────────────────────────────
 
-function formatWeatherFallback(days: WeatherDay[]): string {
-  const rows = days
-    .map(
-      (d) =>
-        `${d.date}  |  ${d.description.padEnd(20)}  |  ${d.minTemp}°–${d.maxTemp}°C` +
-        (d.precipitation > 0 ? `  |  ${d.precipitation}mm rain` : "")
-    )
-    .join("\n");
-
-  return `Tel Aviv 7-Day Forecast\n${"─".repeat(60)}\n${rows}\n\nHave a great week!`;
+function weatherEmoji(description: string): string {
+  const d = description.toLowerCase();
+  if (d.includes("thunder")) return "⛈️";
+  if (d.includes("snow")) return "❄️";
+  if (d.includes("heavy rain") || d.includes("violent")) return "🌧️";
+  if (d.includes("rain") || d.includes("drizzle") || d.includes("shower")) return "🌦️";
+  if (d.includes("fog")) return "🌫️";
+  if (d.includes("overcast")) return "☁️";
+  if (d.includes("partly cloudy")) return "⛅";
+  if (d.includes("mainly clear")) return "🌤️";
+  return "☀️";
 }
 
-async function generateEmailBody(days: WeatherDay[]): Promise<string> {
-  if (!ANTHROPIC_API_KEY) {
-    return formatWeatherFallback(days);
-  }
+function tempColor(temp: number): string {
+  if (temp >= 35) return "#e53e3e";
+  if (temp >= 28) return "#dd6b20";
+  if (temp >= 20) return "#d69e2e";
+  if (temp >= 12) return "#38a169";
+  return "#3182ce";
+}
 
-  const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+function formatDayLabel(dateStr: string): string {
+  const date = new Date(dateStr);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((date.getTime() - today.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return date.toLocaleDateString("en-US", { weekday: "long" });
+}
 
-  const forecast = days
-    .map(
-      (d) =>
-        `${d.date}: ${d.description}, ${d.minTemp}–${d.maxTemp}°C, ${d.precipitation}mm rain`
-    )
-    .join("\n");
+// ── HTML email template ───────────────────────────────────────────────────────
 
-  const msg = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 512,
-    messages: [
-      {
+function buildHtmlEmail(days: WeatherDay[], intro: string): string {
+  const dayCards = days
+    .map((d) => {
+      const label = formatDayLabel(d.date);
+      const emoji = weatherEmoji(d.description);
+      const maxColor = tempColor(d.maxTemp);
+      const rain = d.precipitation > 0
+        ? `<div style="margin-top:4px;font-size:12px;color:#718096;">💧 ${d.precipitation}mm</div>`
+        : "";
+      return `
+      <div style="background:#ffffff;border-radius:12px;padding:16px 20px;margin-bottom:10px;
+                  display:flex;align-items:center;justify-content:space-between;
+                  box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="font-size:28px;line-height:1;">${emoji}</span>
+          <div>
+            <div style="font-weight:600;font-size:15px;color:#2d3748;">${label}</div>
+            <div style="font-size:12px;color:#718096;margin-top:2px;">${d.date}</div>
+            <div style="font-size:13px;color:#4a5568;margin-top:4px;">${d.description}</div>
+            ${rain}
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <span style="font-size:22px;font-weight:700;color:${maxColor};">${d.maxTemp}°</span>
+          <span style="font-size:14px;color:#a0aec0;margin-left:4px;">/ ${d.minTemp}°</span>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f7fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:520px;margin:32px auto;padding:0 16px;">
+
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#667eea,#764ba2);border-radius:16px;
+                padding:28px 24px;margin-bottom:20px;text-align:center;">
+      <div style="font-size:36px;margin-bottom:8px;">🌍</div>
+      <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;">Tel Aviv Weather</h1>
+      <p style="margin:6px 0 0;color:rgba(255,255,255,0.85);font-size:14px;">7-day forecast</p>
+    </div>
+
+    <!-- Intro -->
+    <div style="background:#ffffff;border-radius:12px;padding:16px 20px;margin-bottom:16px;
+                box-shadow:0 1px 3px rgba(0,0,0,0.08);font-size:14px;color:#4a5568;line-height:1.6;">
+      ${intro}
+    </div>
+
+    <!-- Day cards -->
+    ${dayCards}
+
+    <!-- Footer -->
+    <p style="text-align:center;font-size:12px;color:#a0aec0;margin-top:24px;">
+      Data from Open-Meteo · Sent by your weather agent
+    </p>
+  </div>
+</body>
+</html>`;
+}
+
+// ── Email body generation ─────────────────────────────────────────────────────
+
+async function generateEmail(days: WeatherDay[]): Promise<{ html: string; text: string }> {
+  let intro = "Here's your Tel Aviv forecast for the week ahead.";
+
+  if (ANTHROPIC_API_KEY) {
+    const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const forecast = days
+      .map((d) => `${d.date}: ${d.description}, ${d.minTemp}–${d.maxTemp}°C, ${d.precipitation}mm rain`)
+      .join("\n");
+
+    const msg = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 200,
+      messages: [{
         role: "user",
-        content: `You are writing a friendly daily weather briefing email for Tel Aviv.
-
-Here is the raw 7-day forecast:
+        content: `Given this Tel Aviv 7-day forecast:
 ${forecast}
 
-Write a short, friendly email body (plain text, no markdown) that:
-- Opens with a one-sentence summary of the week's weather character
-- Lists each day concisely (date, emoji, temp range, any rain)
-- Closes with a practical tip if there's anything notable (heat wave, rain, etc.)
-- Keeps it under 200 words total
+Write ONE short sentence (max 25 words) summarising the week's weather character and any notable tip.
+No greeting, no sign-off, just the sentence.`,
+      }],
+    });
 
-No subject line, no greeting — just the body.`,
-      },
-    ],
-  });
+    const block = msg.content[0];
+    if (block.type === "text") intro = block.text.trim();
+  }
 
-  const block = msg.content[0];
-  return block.type === "text" ? block.text : formatWeatherFallback(days);
+  const html = buildHtmlEmail(days, intro);
+
+  const text = days
+    .map((d) => `${formatDayLabel(d.date)} (${d.date}): ${d.description}, ${d.minTemp}–${d.maxTemp}°C` +
+      (d.precipitation > 0 ? `, ${d.precipitation}mm rain` : ""))
+    .join("\n");
+
+  return { html, text: `${intro}\n\n${text}` };
 }
 
 // ── Send email ────────────────────────────────────────────────────────────────
 
-async function sendEmail(body: string, days: WeatherDay[]): Promise<void> {
+async function sendEmail(html: string, text: string, days: WeatherDay[]): Promise<void> {
   if (!RESEND_API_KEY) throw new Error("RESEND_API_KEY is not set");
 
   const resend = new Resend(RESEND_API_KEY);
@@ -145,7 +226,8 @@ async function sendEmail(body: string, days: WeatherDay[]): Promise<void> {
     from: FROM_EMAIL,
     to: TO_EMAIL,
     subject,
-    text: body,
+    html,
+    text,
   });
 
   if (error) throw new Error(`Resend error: ${JSON.stringify(error)}`);
@@ -158,11 +240,11 @@ async function main() {
   const days = await fetchWeather();
   console.log(`Got ${days.length} days of forecast`);
 
-  console.log("Generating email body...");
-  const body = await generateEmailBody(days);
+  console.log("Generating email...");
+  const { html, text } = await generateEmail(days);
 
   console.log("Sending email...");
-  await sendEmail(body, days);
+  await sendEmail(html, text, days);
 
   console.log(`Email sent to ${TO_EMAIL}`);
 }
