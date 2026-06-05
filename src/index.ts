@@ -1,10 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { Resend } from "resend";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const TO_EMAIL = process.env.TO_EMAIL ?? "omri.reuter@gmail.com";
 const FROM_EMAIL = process.env.FROM_EMAIL ?? "onboarding@resend.dev";
 
@@ -179,27 +179,21 @@ function buildHtmlEmail(days: WeatherDay[], intro: string): string {
 async function generateEmail(days: WeatherDay[]): Promise<{ html: string; text: string }> {
   let intro = "Here's your Tel Aviv forecast for the week ahead.";
 
-  if (ANTHROPIC_API_KEY) {
-    const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const forecast = days
-      .map((d) => `${d.date}: ${d.description}, ${d.minTemp}–${d.maxTemp}°C, ${d.precipitation}mm rain`)
-      .join("\n");
+  if (OPENAI_API_KEY) {
+    const client = new OpenAI({ apiKey: OPENAI_API_KEY });
+    const today = days[0];
+    const prompt =
+      `Today in Tel Aviv: ${today.description}, ${today.minTemp}–${today.maxTemp}°C` +
+      (today.precipitation > 0 ? `, ${today.precipitation}mm of rain expected` : "") +
+      `. Write one short, friendly sentence recommending what to wear today. No greeting, just the sentence.`;
 
-    const msg = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      messages: [{
-        role: "user",
-        content: `Given this Tel Aviv 7-day forecast:
-${forecast}
-
-Write ONE short sentence (max 25 words) summarising the week's weather character and any notable tip.
-No greeting, no sign-off, just the sentence.`,
-      }],
+    const res = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 80,
+      messages: [{ role: "user", content: prompt }],
     });
 
-    const block = msg.content[0];
-    if (block.type === "text") intro = block.text.trim();
+    intro = res.choices[0]?.message?.content?.trim() ?? intro;
   }
 
   const html = buildHtmlEmail(days, intro);
